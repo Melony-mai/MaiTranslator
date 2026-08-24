@@ -91,12 +91,16 @@ class AppController(QObject):
                 note_bits.append("已自动复制")
             else:
                 note_bits.append("自动复制失败，请手动复制")
+        if result.get("origin") == "main":
+            return
         self.floating.set_result(
             result["result"], result.get("duration_ms", 0.0), " · ".join(note_bits)
         )
 
-    def _on_failed(self, message: str) -> None:
+    def _on_failed(self, message: str, origin: str = "") -> None:
         log.error("翻译失败: %s", message)
+        if origin == "main":
+            return
         self.floating.set_error(f"翻译失败：{message}\n\n请确认推理引擎已启动（设置页可查看状态）。")
 
     def _on_copy_requested(self) -> None:

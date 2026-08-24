@@ -22,7 +22,11 @@ from app.integrations import contextmenu as contextmenu_mod
 from app.integrations import startup
 from app.ui.icons import app_icon
 from app.ui.main_window import MainWindow
-from app.ui.theme import apply_to_application, manager as theme_manager
+from app.ui.theme import (
+    apply_to_application,
+    manager as theme_manager,
+    tray_menu_stylesheet,
+)
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +76,9 @@ class MaiTranslatorApp:
         self.main_window = MainWindow(self.server, self.glossary, self.history)
         self.main_window.translate_requested.connect(self._on_main_translate)
 
+        self.service.finished_ok.connect(self._on_main_translate_finished)
+        self.service.failed.connect(self._on_main_translate_failed)
+
         self.tray = QSystemTrayIcon(icon)
         self._build_tray_menu()
 
@@ -83,6 +90,7 @@ class MaiTranslatorApp:
 
     def _build_tray_menu(self) -> None:
         menu = QMenu()
+        menu.setStyleSheet(tray_menu_stylesheet())
         show_action = QAction("显示主窗口", menu)
         show_action.triggered.connect(self.show_main_window)
         menu.addAction(show_action)
@@ -116,9 +124,14 @@ class MaiTranslatorApp:
         menu.addAction(quit_action)
 
         self.tray.setContextMenu(menu)
+        self.tray_menu = menu
+        theme_manager().changed.connect(self._retheme_tray_menu)
         self.tray.setToolTip("MaiTranslator · 本地离线翻译\nAlt + F 划词翻译")
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
+
+    def _retheme_tray_menu(self, *args) -> None:
+        self.tray_menu.setStyleSheet(tray_menu_stylesheet())
 
     def _on_tray_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
@@ -203,11 +216,24 @@ class MaiTranslatorApp:
 
     def _on_main_translate(self, text: str, forced: str) -> None:
         self.controller.floating.hide()
-        src_guess, tgt_guess = self.controller._guess_direction(text, forced or None)
-        self.controller.floating.begin_translation(
-            text, AppController.direction_text(src_guess, tgt_guess)
-        )
-        self.service.submit(text, forced or "")
+        self.main_window.set_translate_busy(True)
+        self.main_window.result_edit.clear()
+        accepted = self.service.submit(text, forced or "", origin="main")
+        if not accepted and self.service.busy:
+            self.main_window.set_translate_busy(False)
+            self.main_window.translate_status.setText("已有翻译任务进行中，请稍候…")
+
+    def _on_main_translate_finished(self, result: dict) -> None:
+        if result.get("origin") != "main":
+            return
+        self.main_window.set_translate_busy(False)
+        self.main_window.show_translation_result(result)
+
+    def _on_main_translate_failed(self, message: str, origin: str = "") -> None:
+        if origin != "main":
+            return
+        self.main_window.set_translate_busy(False)
+        self.main_window.show_translation_error(message)
 
     def quit(self) -> None:
         log.info("正在退出…")

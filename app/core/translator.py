@@ -51,7 +51,7 @@ def build_prompt(text: str, src: str, tgt: str, pairs: list[dict[str, str]] | No
 
 class TranslationWorker(QThread):
     finished_ok = Signal(dict)
-    failed = Signal(str)
+    failed = Signal(str, str)
 
     def __init__(
         self,
@@ -60,12 +60,14 @@ class TranslationWorker(QThread):
         forced_dir: str | None = None,
         glossary: Glossary | None = None,
         parent: QObject | None = None,
+        origin: str = "",
     ) -> None:
         super().__init__(parent)
         self._server = server
         self._text = text
         self._forced_dir = forced_dir
         self._glossary = glossary
+        self._origin = origin
 
     def run(self) -> None:
         started = time.monotonic()
@@ -78,10 +80,11 @@ class TranslationWorker(QThread):
             )
             duration_ms = (time.monotonic() - started) * 1000.0
             result["duration_ms"] = round(duration_ms, 1)
+            result["origin"] = self._origin
             self.finished_ok.emit(result)
         except Exception as e:
             log.exception("翻译失败")
-            self.failed.emit(str(e))
+            self.failed.emit(str(e), self._origin)
 
 
 def translate_sync(
@@ -127,7 +130,7 @@ def translate_sync(
 
 class TranslationService(QObject):
     finished_ok = Signal(dict)
-    failed = Signal(str)
+    failed = Signal(str, str)
     busy_changed = Signal(bool)
 
     def __init__(
@@ -147,20 +150,21 @@ class TranslationService(QObject):
     def busy(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
 
-    def submit(self, text: str, forced_dir: str | None = None) -> None:
+    def submit(self, text: str, forced_dir: str | None = None, origin: str = "") -> bool:
         if self.busy:
             log.info("已有翻译任务进行中，忽略新请求")
-            return
+            return False
         if self.server.state != LlamaServer.STATE_READY:
-            self.failed.emit("推理引擎尚未就绪，请稍候或在设置中启动引擎。")
-            return
-        worker = TranslationWorker(self.server, text, forced_dir, self.glossary)
+            self.failed.emit("推理引擎尚未就绪，请稍候或在设置中启动引擎。", origin)
+            return False
+        worker = TranslationWorker(self.server, text, forced_dir, self.glossary, origin=origin)
         worker.finished_ok.connect(self._on_done)
         worker.failed.connect(self._on_fail)
         worker.finished.connect(self._cleanup)
         self._worker = worker
         self.busy_changed.emit(True)
         worker.start()
+        return True
 
     def _on_done(self, result: dict) -> None:
         try:
@@ -175,8 +179,8 @@ class TranslationService(QObject):
             log.exception("历史记录写入失败")
         self.finished_ok.emit(result)
 
-    def _on_fail(self, message: str) -> None:
-        self.failed.emit(message)
+    def _on_fail(self, message: str, origin: str = "") -> None:
+        self.failed.emit(message, origin)
 
     def _cleanup(self) -> None:
         w = self._worker

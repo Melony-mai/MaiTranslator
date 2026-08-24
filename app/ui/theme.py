@@ -39,7 +39,7 @@ LIGHT = {
     "warning": "#8f6000",
     "error": "#bb2d20",
     "disabled_bg": "#e4e8f0",
-    "disabled_text": "#9aa3b5",
+    "disabled_text": "#6f7889",
     "view_bg": "#ffffff",
     "card": "#ffffff",
     "shadow_border": "#c9d1de",
@@ -278,12 +278,71 @@ QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 """
 
 
+TRAY_QSS = """
+QMenu {
+    background-color: $surface;
+    color: $text;
+    border: 1px solid $border_strong;
+    border-radius: 8px;
+    padding: 6px 4px;
+    font-size: 13px;
+}
+QMenu::item {
+    background: transparent;
+    color: $text;
+    padding: 7px 28px 7px 14px;
+    margin: 2px 6px;
+    border-radius: 6px;
+}
+QMenu::item:selected {
+    background: $selection_bg;
+    color: $selection_text;
+}
+QMenu::item:disabled {
+    color: $disabled_text;
+    background: transparent;
+}
+QMenu::item:disabled:selected {
+    background: transparent;
+    color: $disabled_text;
+}
+QMenu::separator {
+    height: 1px;
+    background: $border_strong;
+    margin: 5px 10px;
+}
+QMenu::indicator {
+    width: 15px;
+    height: 15px;
+    margin-left: 6px;
+    border: 1px solid $border_strong;
+    border-radius: 4px;
+    background: $input_bg;
+}
+QMenu::indicator:hover {
+    border-color: $accent;
+}
+QMenu::indicator:checked {
+    border: 1px solid $accent;
+    background: $accent;
+}
+QMenu::right-arrow {
+    width: 8px;
+    height: 8px;
+}
+"""
+
+
 def app_stylesheet(pal: dict | None = None) -> str:
     return Template(APP_QSS).substitute(pal or current_palette())
 
 
 def floating_stylesheet(pal: dict | None = None) -> str:
     return Template(FLOATING_QSS).substitute(pal or current_palette())
+
+
+def tray_menu_stylesheet(pal: dict | None = None) -> str:
+    return Template(TRAY_QSS).substitute(pal or current_palette())
 
 
 class ThemeManager(QObject):
