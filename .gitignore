@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build artifacts
+build/pyinstaller/
+build/assets/app.ico
+build/assets/app_icon.png
+dist/
+
+# Runtime assets (fetched by tools/setup_deps.ps1)
+vendor/
+models/
+downloads/
+
+# Local data & logs
+*.log
+*.db
+*.db-journal
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
