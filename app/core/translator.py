@@ -145,26 +145,72 @@ class TranslationService(QObject):
         self.glossary = glossary
         self.history = history
         self._worker: TranslationWorker | None = None
+        self._queued: tuple[str, str | None, str] | None = None
+        self.server.stateChanged.connect(self._on_server_state_changed)
 
     @property
     def busy(self) -> bool:
+        if self._queued is not None:
+            return True
         return self._worker is not None and self._worker.isRunning()
 
     def submit(self, text: str, forced_dir: str | None = None, origin: str = "") -> bool:
         if self.busy:
             log.info("已有翻译任务进行中，忽略新请求")
             return False
-        if self.server.state != LlamaServer.STATE_READY:
-            self.failed.emit("推理引擎尚未就绪，请稍候或在设置中启动引擎。", origin)
+        if self.server.state == LlamaServer.STATE_ERROR:
+            detail = self.server._error_msg or "请到设置页查看引擎状态"
+            self.failed.emit(f"推理引擎异常：{detail}", origin)
             return False
+        status = self.server.ensure_ready_async()
+        if status == "unavailable":
+            self.failed.emit("推理引擎尚未就绪，无法启动。请在设置页检查引擎与模型。", origin)
+            return False
+        if status == "ready":
+            self.busy_changed.emit(True)
+            self._dispatch(text, forced_dir, origin)
+            return True
+        log.info("引擎需要加载资源，翻译请求已排队等待就绪（%s）", status)
+        self._queued = (text, forced_dir, origin)
+        self.server.pending_requests += 1
+        self.busy_changed.emit(True)
+        if self.server.state == LlamaServer.STATE_READY:
+            self._dequeue_dispatch()
+        return True
+
+    def _dispatch(self, text: str, forced_dir: str | None, origin: str) -> None:
+        self.server.mark_activity()
         worker = TranslationWorker(self.server, text, forced_dir, self.glossary, origin=origin)
         worker.finished_ok.connect(self._on_done)
         worker.failed.connect(self._on_fail)
         worker.finished.connect(self._cleanup)
         self._worker = worker
-        self.busy_changed.emit(True)
         worker.start()
-        return True
+
+    def _take_queued(self) -> tuple[str, str | None, str] | None:
+        queued = self._queued
+        self._queued = None
+        if queued is not None:
+            self.server.pending_requests = max(0, self.server.pending_requests - 1)
+        return queued
+
+    def _dequeue_dispatch(self) -> None:
+        queued = self._take_queued()
+        if queued is not None:
+            self._dispatch(*queued)
+
+    def _on_server_state_changed(self, state: str, message: str) -> None:
+        if self._queued is None:
+            return
+        if state == LlamaServer.STATE_READY:
+            self._dequeue_dispatch()
+        elif state in (LlamaServer.STATE_ERROR, LlamaServer.STATE_STOPPED):
+            queued = self._take_queued()
+            if queued is not None:
+                self.busy_changed.emit(False)
+                reason = "推理引擎启动失败" if state == LlamaServer.STATE_ERROR else "推理引擎已停止"
+                detail = f"：{message}" if message else ""
+                self.failed.emit(f"{reason}{detail}", queued[2])
 
     def _on_done(self, result: dict) -> None:
         try:

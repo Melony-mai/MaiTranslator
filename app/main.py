@@ -1,5 +1,6 @@
 import ctypes
 import logging
+import os
 import sys
 
 from PySide6.QtCore import Qt
@@ -66,6 +67,8 @@ class MaiTranslatorApp:
         self.history = History()
         self.service = TranslationService(self.server, self.glossary, self.history)
         self.controller = AppController(self.service, self.server)
+        self.server.external_busy_check = lambda: self.service.busy
+        self._awaiting_release_note = False
 
         theme_manager().changed.connect(apply_to_application)
         apply_to_application()
@@ -104,6 +107,10 @@ class MaiTranslatorApp:
         self._engine_tray_action = engine_action
         menu.addAction(engine_action)
         self.server.stateChanged.connect(self._on_engine_state_changed)
+
+        release_vram_action = QAction("释放显存（切回内存驻留）", menu)
+        release_vram_action.triggered.connect(self._on_tray_release_vram)
+        menu.addAction(release_vram_action)
 
         menu.addSeparator()
 
@@ -146,20 +153,74 @@ class MaiTranslatorApp:
             QMessageBox.warning(self.main_window, "MaiTranslator", "修改开机自启失败。")
 
     def _on_engine_state_changed(self, state: str, message: str) -> None:
-        text_map = {
-            LlamaServer.STATE_STOPPED: "已停止",
-            LlamaServer.STATE_LOADING: "加载中…",
-            LlamaServer.STATE_READY: f"就绪 · {'GPU' if self.server.gpu_active else 'CPU'} 加速",
-            LlamaServer.STATE_ERROR: "错误",
-        }
+        if state == LlamaServer.STATE_READY:
+            mode = "GPU 加速" if self.server.gpu_active else "内存驻留"
+            text_map = {
+                LlamaServer.STATE_STOPPED: "已停止",
+                LlamaServer.STATE_LOADING: "加载中…",
+                LlamaServer.STATE_READY: f"就绪 · {mode}",
+                LlamaServer.STATE_ERROR: "错误",
+            }
+        else:
+            text_map = {
+                LlamaServer.STATE_STOPPED: "已停止",
+                LlamaServer.STATE_LOADING: "加载中…",
+                LlamaServer.STATE_READY: "就绪",
+                LlamaServer.STATE_ERROR: "错误",
+            }
         self._engine_tray_action.setText(f"引擎状态：{text_map.get(state, state)}")
         self.main_window.update_engine_status(state, message)
+        if state == LlamaServer.STATE_READY and self._awaiting_release_note:
+            self._awaiting_release_note = False
+            if not self.server.gpu_active:
+                self.tray.showMessage(
+                    "MaiTranslator",
+                    "显存已释放，模型已切换为内存驻留模式。",
+                    QSystemTrayIcon.Information,
+                    4000,
+                )
+        elif state == LlamaServer.STATE_ERROR:
+            self._awaiting_release_note = False
         if state == LlamaServer.STATE_ERROR:
             self.tray.showMessage(
                 "MaiTranslator 引擎错误",
                 message or "推理引擎启动失败，请到设置页查看。",
                 QSystemTrayIcon.Critical,
                 5000,
+            )
+
+    def _on_tray_release_vram(self) -> None:
+        if self.service.busy or self.server.pending_requests > 0:
+            self.tray.showMessage(
+                "MaiTranslator",
+                "翻译任务进行中，请完成后再释放显存。",
+                QSystemTrayIcon.Information,
+                3000,
+            )
+            return
+        if self.server.state == LlamaServer.STATE_LOADING:
+            self.tray.showMessage(
+                "MaiTranslator",
+                "引擎正在加载模型，请稍后再试。",
+                QSystemTrayIcon.Information,
+                3000,
+            )
+            return
+        if self.server.state != LlamaServer.STATE_READY or not self.server.gpu_active:
+            self.tray.showMessage(
+                "MaiTranslator",
+                "当前未占用显存，引擎已处于内存驻留模式。",
+                QSystemTrayIcon.Information,
+                3000,
+            )
+            return
+        if self.server.release_vram(reason="manual"):
+            self._awaiting_release_note = True
+            self.tray.showMessage(
+                "MaiTranslator",
+                "正在释放显存，模型将切换为内存驻留模式…",
+                QSystemTrayIcon.Information,
+                3000,
             )
 
     def _on_ipc_connection(self) -> None:
@@ -194,8 +255,8 @@ class MaiTranslatorApp:
         elif not minimized:
             self.show_main_window()
 
-        self.server.start()
-        log.info("%s v%s 启动完成", APP_NAME, APP_VERSION)
+        self.server.start_standby()
+        log.info("%s v%s 启动完成（内存驻留模式，显存将在翻译时按需加载）", APP_NAME, APP_VERSION)
 
     def show_main_window(self) -> None:
         self.main_window.show()

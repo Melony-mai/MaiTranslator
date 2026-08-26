@@ -204,6 +204,9 @@ QTableWidget {
     background: $view_bg; alternate-background-color: $surface_alt;
     selection-background-color: $selection_bg; selection-color: $selection_text;
 }
+QTableWidget::item:hover { background: $surface_alt; }
+QTableWidget::item:selected { background: $accent; color: $on_accent; }
+QTableWidget::item:selected:!active { background: $accent_hover; color: $on_accent; }
 QHeaderView::section {
     background: $header_bg; color: $header_text; border: none;
     padding: 6px; font-weight: bold;

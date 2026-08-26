@@ -56,4 +56,4 @@ class HotkeyListener(QThread):
 
     def stop(self) -> None:
         if self._thread_id:
-            ctypes.windll.kernel32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
+            ctypes.windll.user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)

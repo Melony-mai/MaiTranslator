@@ -2,11 +2,13 @@ import logging
 import os
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -42,6 +44,128 @@ DIRECTION_TEXTS = {
     ("zh", "en"): "中 → 英",
     ("en", "zh"): "英 → 中",
 }
+
+
+class HistoryTable(QTableWidget):
+    """历史记录表：单击查看详情，Shift/Ctrl+单击多选（标准 Windows 行为）。"""
+
+    deleteRequested = Signal()
+    viewRequested = Signal(int)
+
+    def _is_editing(self) -> bool:
+        return self.state() == QAbstractItemView.EditingState
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key_Delete and not self._is_editing():
+            self.deleteRequested.emit()
+            return
+        if event.key() == Qt.Key_Escape and not self._is_editing():
+            self.clearSelection()
+            return
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and not self._is_editing():
+            row = self.currentRow()
+            if row >= 0:
+                self.viewRequested.emit(row)
+                return
+        super().keyPressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        super().mouseReleaseEvent(event)
+        if (
+            event.button() == Qt.LeftButton
+            and not self._is_editing()
+            and not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
+        ):
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid():
+                self.viewRequested.emit(index.row())
+
+
+class HistoryDetailDialog(QDialog):
+    """历史记录详情弹窗：完整展示一条翻译记录的原文与译文。"""
+
+    def __init__(self, record: dict, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"翻译详情 · 记录 #{record['id']}")
+        self.setModal(True)
+        self.resize(680, 580)
+        self.setSizeGripEnabled(True)
+
+        pal = current_palette()
+        direction = DIRECTION_TEXTS.get(
+            (record["src_lang"], record["tgt_lang"]),
+            f"{record['src_lang']} → {record['tgt_lang']}",
+        )
+        secs = float(record.get("duration_ms") or 0.0) / 1000.0
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 20, 20, 16)
+        lay.setSpacing(10)
+
+        head = QHBoxLayout()
+        badge = QLabel(direction)
+        badge.setStyleSheet(
+            f"background:{pal['badge_bg']}; color:{pal['badge_text']};"
+            "border-radius:6px; padding:4px 14px; font-weight:bold; font-size:13px;"
+        )
+        head.addWidget(badge)
+        head.addStretch(1)
+        rec_id = QLabel(f"记录 #{record['id']}")
+        rec_id.setObjectName("hint")
+        head.addWidget(rec_id)
+        lay.addLayout(head)
+
+        meta_bits = [f"时间：{record['created_at']}", f"耗时：{secs:.1f} 秒"]
+        if record.get("chars"):
+            meta_bits.append(f"原文 {record['chars']} 字符")
+        meta = QLabel("　·　".join(meta_bits))
+        meta.setObjectName("hint")
+        lay.addWidget(meta)
+
+        src_title = QLabel("原文")
+        src_title.setStyleSheet(f"color:{pal['text_secondary']}; font-weight:bold; font-size:13px;")
+        lay.addWidget(src_title)
+        self.source_view = QTextEdit()
+        self.source_view.setReadOnly(True)
+        self.source_view.setPlaceholderText("（无内容）")
+        self.source_view.setPlainText(record["source"])
+        lay.addWidget(self.source_view, stretch=5)
+
+        dst_title = QLabel("译文")
+        dst_title.setStyleSheet(f"color:{pal['text_secondary']}; font-weight:bold; font-size:13px;")
+        lay.addWidget(dst_title)
+        self.result_view = QTextEdit()
+        self.result_view.setReadOnly(True)
+        self.result_view.setPlaceholderText("（无内容）")
+        self.result_view.setPlainText(record["result"])
+        lay.addWidget(self.result_view, stretch=5)
+
+        btns = QHBoxLayout()
+        copy_src_btn = QPushButton("复制原文")
+        copy_src_btn.setProperty("class", "secondary")
+        copy_src_btn.clicked.connect(lambda: self._copy_to_clipboard(record["source"], copy_src_btn))
+        btns.addWidget(copy_src_btn)
+        copy_dst_btn = QPushButton("复制译文")
+        copy_dst_btn.clicked.connect(lambda: self._copy_to_clipboard(record["result"], copy_dst_btn))
+        btns.addWidget(copy_dst_btn)
+        btns.addStretch(1)
+        hint = QLabel("提示：可直接在文本框中选择并 Ctrl+C 复制片段。")
+        hint.setObjectName("hint")
+        btns.addWidget(hint)
+        close_btn = QPushButton("关闭")
+        close_btn.setProperty("class", "secondary")
+        close_btn.clicked.connect(self.accept)
+        btns.addWidget(close_btn)
+        lay.addLayout(btns)
+
+    def _copy_to_clipboard(self, text: str, btn: QPushButton) -> None:
+        if not text:
+            return
+        QGuiApplication.clipboard().setText(text)
+        old = btn.text()
+        btn.setText("已复制 ✓")
+        btn.setEnabled(False)
+        QTimer.singleShot(1200, lambda: (btn.setText(old), btn.setEnabled(True)))
 
 
 class MainWindow(QWidget):
@@ -179,11 +303,13 @@ class MainWindow(QWidget):
         search_row.addWidget(reset_btn)
         lay.addLayout(search_row)
 
-        self.history_table = QTableWidget(0, 5)
+        self.history_table = HistoryTable(0, 5)
         self.history_table.setHorizontalHeaderLabels(["时间", "方向", "原文", "译文", "耗时(秒)"])
         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.history_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.history_table.setWordWrap(False)
+        self.history_table.setTextElideMode(Qt.ElideRight)
         header = self.history_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -191,6 +317,9 @@ class MainWindow(QWidget):
         header.setSectionResizeMode(3, QHeaderView.Stretch)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.history_table.verticalHeader().setVisible(False)
+        self.history_table.itemSelectionChanged.connect(self._update_history_selection_info)
+        self.history_table.deleteRequested.connect(self._delete_selected_history)
+        self.history_table.viewRequested.connect(self._show_history_detail)
         lay.addWidget(self.history_table, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -202,6 +331,12 @@ class MainWindow(QWidget):
         copy_s.clicked.connect(lambda: self._copy_selected(which="source"))
         btn_row.addWidget(copy_s)
         btn_row.addStretch(1)
+        self.history_sel_label = QLabel("未选择记录")
+        self.history_sel_label.setObjectName("hint")
+        self.history_sel_label.setToolTip(
+            "单击记录查看完整详情；按住 Shift 或 Ctrl 单击可选择多条；Ctrl+A 全选；Delete 删除所选。"
+        )
+        btn_row.addWidget(self.history_sel_label)
         del_btn = QPushButton("删除所选")
         del_btn.setProperty("class", "secondary")
         del_btn.clicked.connect(self._delete_selected_history)
@@ -321,6 +456,13 @@ class MainWindow(QWidget):
         self.kv_combo.currentIndexChanged.connect(self._save_settings)
         form.addRow("KV 缓存精度：", self.kv_combo)
 
+        self.vram_idle_spin = QSpinBox()
+        self.vram_idle_spin.setRange(0, 240)
+        self.vram_idle_spin.setSuffix(" 分钟")
+        self.vram_idle_spin.setSpecialValueText("不自动释放")
+        self.vram_idle_spin.valueChanged.connect(self._save_settings)
+        form.addRow("空闲后自动释放显存：", self.vram_idle_spin)
+
         self.threads_spin = QSpinBox()
         self.threads_spin.setRange(1, 32)
         self.threads_spin.valueChanged.connect(self._save_settings)
@@ -426,6 +568,7 @@ class MainWindow(QWidget):
         kv = config.get("kv_cache", "q8_0")
         kidx = self.kv_combo.findData(kv)
         self.kv_combo.setCurrentIndex(kidx if kidx >= 0 else 1)
+        self.vram_idle_spin.setValue(int(config.get("vram_auto_release_minutes", 5)))
         self.threads_spin.setValue(int(config.get("threads", 8)))
         self.temp_spin.setValue(float(config.get("temperature", 0.7)))
         self.topk_spin.setValue(int(config.get("top_k", 20)))
@@ -444,6 +587,7 @@ class MainWindow(QWidget):
         config.set_key("gpu_mode", self.gpu_combo.currentData())
         config.set_key("context", self.ctx_combo.currentData())
         config.set_key("kv_cache", self.kv_combo.currentData())
+        config.set_key("vram_auto_release_minutes", self.vram_idle_spin.value())
         config.set_key("threads", self.threads_spin.value())
         config.set_key("temperature", self.temp_spin.value())
         config.set_key("top_k", self.topk_spin.value())
@@ -537,6 +681,9 @@ class MainWindow(QWidget):
             LlamaServer.STATE_ERROR: ("🔴 错误", pal["error"]),
         }
         text, color = mapping.get(state, ("-", pal["text_muted"]))
+        if state == LlamaServer.STATE_READY:
+            mode = "GPU 加速" if self.server.gpu_active else "内存驻留（未占用显存）"
+            text = f"{text} · {mode}"
         extra = f" — {message}" if message and state != LlamaServer.STATE_READY else ""
         self.engine_status.setText(text + extra)
         self.engine_status.setStyleSheet(f"color:{color};")
@@ -620,6 +767,7 @@ class MainWindow(QWidget):
         rows = self.history.query(search, limit=300)
         table = self.history_table
         table.setUpdatesEnabled(False)
+        table.clearSelection()
         table.setRowCount(len(rows))
         for i, r in enumerate(rows):
             direction = DIRECTION_TEXTS.get((r["src_lang"], r["tgt_lang"]), f'{r["src_lang"]}→{r["tgt_lang"]}')
@@ -632,12 +780,34 @@ class MainWindow(QWidget):
             ]
             for col, val in enumerate(values):
                 item = QTableWidgetItem(val)
+                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 if col == 0:
                     item.setData(Qt.UserRole, r["id"])
                 if col in (2, 3):
                     item.setToolTip(r["source"] if col == 2 else r["result"])
                 table.setItem(i, col, item)
         table.setUpdatesEnabled(True)
+        self._update_history_selection_info()
+
+    def _show_history_detail(self, row: int) -> None:
+        id_item = self.history_table.item(row, 0)
+        hid = id_item.data(Qt.UserRole) if id_item is not None else None
+        if hid is None:
+            return
+        record = self.history.get(int(hid))
+        if record is None:
+            QMessageBox.information(self, "MaiTranslator", "该记录已被删除，列表已自动刷新。")
+            self._refresh_history()
+            return
+        HistoryDetailDialog(record, self).exec()
+
+    def _update_history_selection_info(self) -> None:
+        if not hasattr(self, "history_sel_label"):
+            return
+        rows = {it.row() for it in self.history_table.selectedItems()}
+        n = len(rows)
+        total = self.history_table.rowCount()
+        self.history_sel_label.setText(f"已选 {n}/{total} 条" if n else "未选择记录")
 
     @staticmethod
     def _ellipsis(text: str, n: int) -> str:
@@ -669,6 +839,11 @@ class MainWindow(QWidget):
     def _delete_selected_history(self) -> None:
         ids = self._selected_history_ids()
         if not ids:
+            QMessageBox.information(
+                self,
+                "MaiTranslator",
+                "请先在列表中单击选择要删除的记录（可按住 Shift 连选多条）。",
+            )
             return
         if QMessageBox.question(self, "MaiTranslator", f"确定删除所选的 {len(ids)} 条记录吗？") != QMessageBox.Yes:
             return

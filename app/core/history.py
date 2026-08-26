@@ -68,6 +68,22 @@ class History:
             for r in rows
         ]
 
+    def get(self, record_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id,created_at,src_lang,tgt_lang,source,result,duration_ms,chars"
+                " FROM translations WHERE id=?",
+                (int(record_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(
+            zip(
+                ["id", "created_at", "src_lang", "tgt_lang", "source", "result", "duration_ms", "chars"],
+                row,
+            )
+        )
+
     def delete(self, ids: list[int]) -> None:
         with self._lock:
             self._conn.executemany("DELETE FROM translations WHERE id=?", [(i,) for i in ids])

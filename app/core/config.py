@@ -29,6 +29,7 @@ DEFAULTS = {
     "force_replace_glossary": False,
     "floating_at_cursor": True,
     "capture_delay_ms": 260,
+    "vram_auto_release_minutes": 5,
 }
 
 _cache: dict | None = None
