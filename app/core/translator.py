@@ -87,15 +87,31 @@ class TranslationWorker(QThread):
             self.failed.emit(str(e), self._origin)
 
 
-def translate_sync(
+def split_paragraphs_into_chunks(text: str, max_chars: int = 1200) -> list[str]:
+    lines = text.split("\n")
+    chunks: list[str] = []
+    current_chunk: list[str] = []
+    current_len = 0
+    for line in lines:
+        line_len = len(line) + 1
+        if current_len + line_len > max_chars and current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = [line]
+            current_len = line_len
+        else:
+            current_chunk.append(line)
+            current_len += line_len
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+    return chunks
+
+
+def _translate_chunk_sync(
     server: LlamaServer,
     text: str,
     forced_dir: str | None = None,
     glossary: Glossary | None = None,
 ) -> dict:
-    text = text.strip("\ufeff").strip()
-    if not text:
-        raise ValueError("没有可翻译的文本")
     src, tgt = langdetect.direction(text, forced_dir)
     protect_numbers = bool(config.get("protect_numbers", True))
     pt = protect(text, protect_numbers=protect_numbers)
@@ -107,7 +123,7 @@ def translate_sync(
     prompt = build_prompt(pt.protected_text, src, tgt, pairs or None)
     prompt_chars = len(prompt)
     est_tokens = max(256, int(prompt_chars * 1.6))
-    ctx = int(config.get("context", 8192))
+    ctx = int(config.get("context", 4096))
     budget = max(256, min(int(config.get("max_tokens", 4096)), ctx - est_tokens - 64))
     raw = server.chat(prompt, max_tokens=budget)
     restored = restore(raw, pt)
@@ -126,6 +142,46 @@ def translate_sync(
         "used_terms": [p["term"] for p in used_terms],
         "missing_terms": [p["term"] for p in missing_terms],
     }
+
+
+def translate_sync(
+    server: LlamaServer,
+    text: str,
+    forced_dir: str | None = None,
+    glossary: Glossary | None = None,
+) -> dict:
+    text = text.strip("\ufeff").strip()
+    if not text:
+        raise ValueError("没有可翻译的文本")
+
+    # 长文本按段落分块翻译，避免超出精简上下文并节省显存
+    if len(text) > 1500 and "\n" in text:
+        chunks = split_paragraphs_into_chunks(text, max_chars=1200)
+        if len(chunks) > 1:
+            all_results = []
+            all_used_terms: set[str] = set()
+            all_missing_terms: set[str] = set()
+            src_lang, tgt_lang = "", ""
+            for chunk in chunks:
+                if not chunk.strip():
+                    all_results.append("")
+                    continue
+                r = _translate_chunk_sync(server, chunk, forced_dir, glossary)
+                all_results.append(r["result"])
+                all_used_terms.update(r["used_terms"])
+                all_missing_terms.update(r["missing_terms"])
+                src_lang = r["src_lang"]
+                tgt_lang = r["tgt_lang"]
+            return {
+                "source": text,
+                "result": "\n".join(all_results),
+                "src_lang": src_lang,
+                "tgt_lang": tgt_lang,
+                "used_terms": sorted(all_used_terms),
+                "missing_terms": sorted(all_missing_terms - all_used_terms),
+            }
+
+    return _translate_chunk_sync(server, text, forced_dir, glossary)
 
 
 class TranslationService(QObject):

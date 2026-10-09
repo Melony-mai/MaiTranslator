@@ -12,9 +12,9 @@ DEFAULTS = {
     "port": 0,
     "gpu_mode": "auto",
     "ngl": 999,
-    "context": 8192,
+    "context": 4096,
     "threads": 8,
-    "kv_cache": "q8_0",
+    "kv_cache": "q4_0",
     "flash_attn": True,
     "temperature": 0.7,
     "top_k": 20,
@@ -29,7 +29,7 @@ DEFAULTS = {
     "force_replace_glossary": False,
     "floating_at_cursor": True,
     "capture_delay_ms": 260,
-    "vram_auto_release_minutes": 5,
+    "vram_auto_release_minutes": 3,
 }
 
 _cache: dict | None = None

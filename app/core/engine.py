@@ -196,7 +196,7 @@ class LlamaServer(QObject):
         elif gpu_mode == "gpu":
             self._ngl_attempts = [int(config.get("ngl", 999))]
         else:
-            self._ngl_attempts = [int(config.get("ngl", 999)), 32, 16, 0]
+            self._ngl_attempts = [int(config.get("ngl", 999)), 24, 16, 8, 0]
 
         self._port = pick_port()
         self._attempt = 0
@@ -237,7 +237,7 @@ class LlamaServer(QObject):
         gpu_mode = config.get("gpu_mode", "auto")
         if gpu_mode == "gpu":
             return [int(config.get("ngl", 999))]
-        return [int(config.get("ngl", 999)), 32, 16, 0]
+        return [int(config.get("ngl", 999)), 24, 16, 8, 0]
 
     @staticmethod
     def _wants_gpu() -> bool:
@@ -356,6 +356,8 @@ class LlamaServer(QObject):
             # 关键：llama-server 默认 ngl=-1（全部层载入显存），
             # CPU/内存驻留模式必须显式传 -ngl 0，否则模型会被整体塞进显存。
             args += ["-ngl", "0"]
+        # 禁用单次翻译不需要的 prompt 缓存，避免系统内存被占用数 GB
+        args += ["--cache-ram", "0"]
         if self._safe_mode:
             return args
         if config.get("flash_attn", True):

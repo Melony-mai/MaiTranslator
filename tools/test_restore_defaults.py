@@ -57,10 +57,10 @@ qt_app.processEvents()
 
 assert config.get("temperature") == 0.7, config.get("temperature")
 assert config.get("top_k") == 20
-assert config.get("context") == 8192
+assert config.get("context") == 4096
 assert config.get("threads") == 8
 assert config.get("gpu_mode") == "auto"
-assert config.get("kv_cache") == "q8_0"
+assert config.get("kv_cache") == "q4_0"
 assert config.get("auto_copy") is True
 assert config.get("protect_numbers") is True
 assert config.get("theme") == "system"
@@ -72,8 +72,8 @@ assert abs(win.temp_spin.value() - 0.7) < 1e-9, win.temp_spin.value()
 assert win.topk_spin.value() == 20
 assert win.threads_spin.value() == 8
 assert win.gpu_combo.currentData() == "auto"
-assert win.ctx_combo.currentData() == 8192
-assert win.kv_combo.currentData() == "q8_0"
+assert win.ctx_combo.currentData() == 4096
+assert win.kv_combo.currentData() == "q4_0"
 assert win.autocopy_check.isChecked() is True
 assert win.protectnum_check.isChecked() is True
 assert win.theme_combo.currentData() == "system"
