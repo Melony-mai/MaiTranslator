@@ -40,7 +40,7 @@
 ### 2. 获取代码与依赖（模型 + 推理引擎）
 
 ```powershell
-git clone https://github.com/<your-name>/MaiTranslator.git
+git clone https://github.com/Melony-mai/MaiTranslator.git
 cd MaiTranslator
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
