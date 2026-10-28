@@ -100,29 +100,15 @@ def protect(text: str, protect_numbers: bool = True) -> ProtectedText:
 def restore(translated: str, pt: ProtectedText) -> str:
     if not pt.segments:
         return translated
-    out = translated
-    search_from = 0
-    missing = []
-    for idx, original in enumerate(pt.segments, start=1):
-        found = None
-        for m in PLACEHOLDER_RX.finditer(out, search_from):
-            if int(m.group(1)) == idx:
-                found = m
-                break
-        if found is None:
-            for m in PLACEHOLDER_RX.finditer(out):
-                if int(m.group(1)) == idx:
-                    found = m
-                    break
-        if found is None:
-            missing.append(idx)
-            continue
-        out = out[: found.start()] + original + out[found.end() :]
-        search_from = found.start() + len(original)
-    for idx in missing:
-        log.warning("占位符 %s 未能在译文中恢复", idx)
-        out = PLACEHOLDER_RX.sub(lambda m, i=idx: "" if int(m.group(1)) == i else m.group(0), out)
-    return out
+
+    def _repl(m: re.Match) -> str:
+        idx = int(m.group(1))
+        if 1 <= idx <= len(pt.segments):
+            return pt.segments[idx - 1]
+        log.warning("占位符 %s 超出范围", idx)
+        return ""
+
+    return PLACEHOLDER_RX.sub(_repl, translated)
 
 
 def postprocess(result: str, source: str) -> str:

@@ -329,7 +329,7 @@ class LlamaServer(QObject):
         self.release_vram(reason="idle")
 
     def _build_args(self, ngl: int) -> list[str]:
-        ctx = int(config.get("context", 8192))
+        ctx = int(config.get("context", 4096))
         threads = int(config.get("threads", 8))
         kv = config.get("kv_cache", "q8_0")
         args = [
@@ -530,13 +530,19 @@ class LlamaServer(QObject):
     def chat(self, prompt: str, max_tokens: int | None = None, timeout: float = 600.0) -> str:
         if self._state != self.STATE_READY:
             raise RuntimeError("推理引擎未就绪")
+        ctx = int(config.get("context", 4096))
+        est_prompt_tokens = int(len(prompt) * 0.7)
+        available_budget = max(256, ctx - est_prompt_tokens - 32)
+        target_tokens = max_tokens or int(config.get("max_tokens", 4096))
+        actual_max_tokens = min(target_tokens, available_budget)
+
         payload = {
             "messages": [{"role": "user", "content": prompt}],
             "temperature": float(config.get("temperature", 0.7)),
             "top_k": int(config.get("top_k", 20)),
             "top_p": float(config.get("top_p", 0.6)),
             "repeat_penalty": float(config.get("repeat_penalty", 1.05)),
-            "max_tokens": max_tokens or int(config.get("max_tokens", 4096)),
+            "max_tokens": actual_max_tokens,
             "stream": False,
         }
         url = f"http://127.0.0.1:{self._port}/v1/chat/completions"
@@ -560,13 +566,16 @@ class LlamaServer(QObject):
         except socket.timeout as e:
             raise RuntimeError("推理超时，文本可能过长，请分段翻译。") from e
         content = data["choices"][0]["message"]["content"]
+        finish_reason = data["choices"][0].get("finish_reason")
+        self.last_finish_reason = finish_reason
         usage = data.get("usage", {})
         self.mark_activity()
         log.info(
-            "推理完成: %.2fs, tokens(prompt/completion)=%s/%s",
+            "推理完成: %.2fs, tokens(prompt/completion)=%s/%s, finish_reason=%s",
             time.monotonic() - started,
             usage.get("prompt_tokens"),
             usage.get("completion_tokens"),
+            finish_reason,
         )
         return content
 

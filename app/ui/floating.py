@@ -159,6 +159,16 @@ class FloatingWindow(QWidget):
         self._apply_status_color()
         self.status_label.setText(prefix + "." * self._dots)
 
+    def set_progress(self, current: int, total: int) -> None:
+        if total > 1:
+            self._set_status_busy(f"正在本地翻译中 ({current}/{total})")
+
+    def set_stream_result(self, partial_text: str, current: int, total: int) -> None:
+        self._translation = partial_text
+        self.result_view.setPlainText(partial_text)
+        if total > 1:
+            self._set_status_busy(f"正在本地翻译中 ({current}/{total})")
+
     def set_result(self, result_text: str, duration_ms: float, extra_note: str = "") -> None:
         self._dots_timer.stop()
         self._translation = result_text

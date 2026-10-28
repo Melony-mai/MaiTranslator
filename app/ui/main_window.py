@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QDoubleSpinBox,
+    QSplitter,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -33,7 +34,7 @@ from app.core import config
 from app.core.engine import LlamaServer
 from app.core.glossary import Glossary
 from app.core.history import History
-from app.core.paths import data_dir, logs_dir
+from app.core.paths import APP_VERSION, data_dir, logs_dir
 from app.integrations import contextmenu as contextmenu_helper
 from app.integrations import startup
 from app.ui.theme import app_stylesheet, current_palette, manager as theme_manager
@@ -88,7 +89,7 @@ class HistoryDetailDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"翻译详情 · 记录 #{record['id']}")
         self.setModal(True)
-        self.resize(680, 580)
+        self.resize(780, 520)
         self.setSizeGripEnabled(True)
 
         pal = current_palette()
@@ -122,23 +123,41 @@ class HistoryDetailDialog(QDialog):
         meta.setObjectName("hint")
         lay.addWidget(meta)
 
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(8)
+
+        src_panel = QWidget()
+        src_lay = QVBoxLayout(src_panel)
+        src_lay.setContentsMargins(0, 0, 0, 0)
+        src_lay.setSpacing(6)
         src_title = QLabel("原文")
         src_title.setStyleSheet(f"color:{pal['text_secondary']}; font-weight:bold; font-size:13px;")
-        lay.addWidget(src_title)
+        src_lay.addWidget(src_title)
         self.source_view = QTextEdit()
         self.source_view.setReadOnly(True)
         self.source_view.setPlaceholderText("（无内容）")
         self.source_view.setPlainText(record["source"])
-        lay.addWidget(self.source_view, stretch=5)
+        src_lay.addWidget(self.source_view, stretch=1)
+        splitter.addWidget(src_panel)
 
+        dst_panel = QWidget()
+        dst_lay = QVBoxLayout(dst_panel)
+        dst_lay.setContentsMargins(0, 0, 0, 0)
+        dst_lay.setSpacing(6)
         dst_title = QLabel("译文")
         dst_title.setStyleSheet(f"color:{pal['text_secondary']}; font-weight:bold; font-size:13px;")
-        lay.addWidget(dst_title)
+        dst_lay.addWidget(dst_title)
         self.result_view = QTextEdit()
         self.result_view.setReadOnly(True)
         self.result_view.setPlaceholderText("（无内容）")
         self.result_view.setPlainText(record["result"])
-        lay.addWidget(self.result_view, stretch=5)
+        dst_lay.addWidget(self.result_view, stretch=1)
+        splitter.addWidget(dst_panel)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        lay.addWidget(splitter, stretch=1)
 
         btns = QHBoxLayout()
         copy_src_btn = QPushButton("复制原文")
@@ -186,6 +205,7 @@ class MainWindow(QWidget):
         self.history = history
         self.setWindowTitle("MaiTranslator · 本地离线翻译")
         self.resize(920, 640)
+        self.setMinimumSize(700, 460)
         self._forced_dir = "auto"
         self._loading_settings = True
         self._build_ui()
@@ -241,48 +261,111 @@ class MainWindow(QWidget):
         self.dir_combo.addItems(["自动检测", "中 → 英", "英 → 中"])
         self.dir_combo.currentIndexChanged.connect(self._on_dir_changed)
         top.addWidget(self.dir_combo)
-        top.addStretch(1)
+        top.addSpacing(12)
         self.detect_label = QLabel("")
         self.detect_label.setObjectName("hint")
         top.addWidget(self.detect_label)
+        top.addStretch(1)
         lay.addLayout(top)
 
+        # 左右并排分割布局：左侧原文面板，右侧译文面板
+        self.translate_splitter = QSplitter(Qt.Horizontal)
+        self.translate_splitter.setChildrenCollapsible(False)
+        self.translate_splitter.setHandleWidth(8)
+
+        # 左侧面板：原文
+        source_panel = QWidget()
+        source_lay = QVBoxLayout(source_panel)
+        source_lay.setContentsMargins(0, 0, 0, 0)
+        source_lay.setSpacing(6)
+
+        src_header = QHBoxLayout()
+        src_header.setSpacing(8)
         src_title = QLabel("原文（自动识别中英文）")
-        lay.addWidget(src_title)
+        src_title.setObjectName("panelTitle")
+        src_header.addWidget(src_title)
+
+        self.source_count_label = QLabel("")
+        self.source_count_label.setObjectName("hint")
+        src_header.addWidget(self.source_count_label)
+        src_header.addStretch(1)
+
+        self.clear_btn = QPushButton("清空")
+        self.clear_btn.setProperty("class", "secondary")
+        self.clear_btn.setToolTip("清空原文与译文")
+        self.clear_btn.clicked.connect(self._on_clear_clicked)
+        src_header.addWidget(self.clear_btn)
+
+        self.copy_src_btn = QPushButton("复制原文")
+        self.copy_src_btn.setProperty("class", "secondary")
+        self.copy_src_btn.setToolTip("复制原文到剪贴板")
+        self.copy_src_btn.clicked.connect(self._copy_source)
+        src_header.addWidget(self.copy_src_btn)
+        source_lay.addLayout(src_header)
+
         self.source_edit = QTextEdit()
         self.source_edit.setPlaceholderText("在此粘贴或输入需要翻译的文本…\n快捷键 Alt + F 可在任意程序中划词翻译。")
         self.source_edit.setMinimumHeight(150)
-        lay.addWidget(self.source_edit, stretch=1)
+        self.source_edit.setMinimumWidth(220)
+        self.source_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.source_edit.setAcceptRichText(False)
+        self.source_edit.textChanged.connect(self._update_source_count)
+        source_lay.addWidget(self.source_edit, stretch=1)
 
-        btn_row = QHBoxLayout()
-        self.go_btn = QPushButton("立即翻译 (Ctrl+Return)")
-        self.go_btn.clicked.connect(self._on_translate_clicked)
-        btn_row.addWidget(self.go_btn)
-        clear_btn = QPushButton("清空")
-        clear_btn.setProperty("class", "secondary")
-        clear_btn.clicked.connect(self._on_clear_clicked)
-        btn_row.addWidget(clear_btn)
-        btn_row.addStretch(1)
-        copy_src_btn = QPushButton("复制原文")
-        copy_src_btn.setProperty("class", "secondary")
-        copy_src_btn.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.source_edit.toPlainText()))
-        btn_row.addWidget(copy_src_btn)
-        copy_dst_btn = QPushButton("复制译文")
-        copy_dst_btn.clicked.connect(self._copy_result)
-        btn_row.addWidget(copy_dst_btn)
-        lay.addLayout(btn_row)
+        self.translate_splitter.addWidget(source_panel)
 
+        # 右侧面板：译文
+        result_panel = QWidget()
+        result_lay = QVBoxLayout(result_panel)
+        result_lay.setContentsMargins(0, 0, 0, 0)
+        result_lay.setSpacing(6)
+
+        dst_header = QHBoxLayout()
+        dst_header.setSpacing(8)
         dst_title = QLabel("译文")
-        lay.addWidget(dst_title)
+        dst_title.setObjectName("panelTitle")
+        dst_header.addWidget(dst_title)
+
+        self.result_count_label = QLabel("")
+        self.result_count_label.setObjectName("hint")
+        dst_header.addWidget(self.result_count_label)
+        dst_header.addStretch(1)
+
+        self.copy_dst_btn = QPushButton("复制译文")
+        self.copy_dst_btn.setProperty("class", "secondary")
+        self.copy_dst_btn.setToolTip("复制译文到剪贴板")
+        self.copy_dst_btn.clicked.connect(self._copy_result)
+        dst_header.addWidget(self.copy_dst_btn)
+        result_lay.addLayout(dst_header)
+
         self.result_edit = QTextEdit()
         self.result_edit.setReadOnly(True)
         self.result_edit.setMinimumHeight(150)
+        self.result_edit.setMinimumWidth(220)
+        self.result_edit.setLineWrapMode(QTextEdit.WidgetWidth)
         self.result_edit.setPlaceholderText("译文将显示在这里，并自动复制到剪贴板。")
-        lay.addWidget(self.result_edit, stretch=1)
+        self.result_edit.textChanged.connect(self._update_result_count)
+        result_lay.addWidget(self.result_edit, stretch=1)
+
+        self.translate_splitter.addWidget(result_panel)
+
+        # 左右两栏均分宽度并自适应伸缩
+        self.translate_splitter.setStretchFactor(0, 1)
+        self.translate_splitter.setStretchFactor(1, 1)
+        self.translate_splitter.setSizes([450, 450])
+        lay.addWidget(self.translate_splitter, stretch=1)
+
+        # 底部操作栏：立即翻译按钮与状态
+        bottom_bar = QHBoxLayout()
+        bottom_bar.setSpacing(12)
+        self.go_btn = QPushButton("立即翻译 (Ctrl+Return)")
+        self.go_btn.clicked.connect(self._on_translate_clicked)
+        bottom_bar.addWidget(self.go_btn)
 
         self.translate_status = QLabel("")
         self.translate_status.setObjectName("hint")
-        lay.addWidget(self.translate_status)
+        bottom_bar.addWidget(self.translate_status, stretch=1)
+        lay.addLayout(bottom_bar)
 
     def _build_history_tab(self) -> None:
         lay = QVBoxLayout(self.tab_history)
@@ -444,8 +527,11 @@ class MainWindow(QWidget):
         form.addRow("加速模式：", self.gpu_combo)
 
         self.ctx_combo = QComboBox()
-        for v in (2048, 4096, 8192, 16384, 32768):
-            self.ctx_combo.addItem(f"{v} tokens", v)
+        self.ctx_combo.addItem("2048 tokens（精简，超低显存）", 2048)
+        self.ctx_combo.addItem("4096 tokens（推荐，低显存与高稳定性）", 4096)
+        self.ctx_combo.addItem("8192 tokens（充足上下文）", 8192)
+        self.ctx_combo.addItem("16384 tokens（高显存消耗）", 16384)
+        self.ctx_combo.addItem("32768 tokens（极大显存消耗）", 32768)
         self.ctx_combo.currentIndexChanged.connect(self._save_settings)
         form.addRow("上下文长度：", self.ctx_combo)
 
@@ -551,7 +637,7 @@ class MainWindow(QWidget):
         lay.addWidget(ctx_menu_box)
 
         about = QLabel(
-            "MaiTranslator v1.0.0 · 完全离线的本地 AI 翻译器\n"
+            f"MaiTranslator v{APP_VERSION} · 完全离线的本地 AI 翻译器\n"
             "仅使用本地 HY-MT1.5-7B GGUF 模型推理，不连接互联网、不上传任何数据。\n"
             "所有数据（配置、词表、历史、日志）均保存在本机。"
         )
@@ -695,6 +781,15 @@ class MainWindow(QWidget):
         else:
             self.translate_status.setText("")
 
+    def set_translate_progress(self, current: int, total: int) -> None:
+        if total > 1:
+            self.translate_status.setText(f"正在本地翻译中 ({current}/{total})，请稍候…")
+
+    def set_translate_stream(self, partial_text: str, current: int, total: int) -> None:
+        self.result_edit.setPlainText(partial_text)
+        if total > 1:
+            self.translate_status.setText(f"正在本地翻译中 ({current}/{total})，请稍候…")
+
     def _on_dir_changed(self, idx: int) -> None:
         self._forced_dir = ["auto", "zh2en", "en2zh"][idx]
 
@@ -707,10 +802,46 @@ class MainWindow(QWidget):
         forced = None if self._forced_dir == "auto" else self._forced_dir
         self.translate_requested.emit(text, forced or "")
 
+    def _update_source_count(self) -> None:
+        chars = len(self.source_edit.toPlainText())
+        if hasattr(self, "source_count_label"):
+            self.source_count_label.setText(f"{chars} 字符" if chars > 0 else "")
+
+    def _update_result_count(self) -> None:
+        chars = len(self.result_edit.toPlainText())
+        if hasattr(self, "result_count_label"):
+            self.result_count_label.setText(f"{chars} 字符" if chars > 0 else "")
+
     def _on_clear_clicked(self) -> None:
         self.source_edit.clear()
         self.result_edit.clear()
         self.translate_status.setText("")
+        if hasattr(self, "source_count_label"):
+            self.source_count_label.setText("")
+        if hasattr(self, "result_count_label"):
+            self.result_count_label.setText("")
+
+    def _copy_source(self) -> None:
+        text = self.source_edit.toPlainText()
+        if not text:
+            return
+        QGuiApplication.clipboard().setText(text)
+        if hasattr(self, "copy_src_btn"):
+            old = self.copy_src_btn.text()
+            self.copy_src_btn.setText("已复制 ✓")
+            self.copy_src_btn.setEnabled(False)
+            QTimer.singleShot(1200, lambda: (self.copy_src_btn.setText(old), self.copy_src_btn.setEnabled(True)))
+
+    def _copy_result(self) -> None:
+        text = self.result_edit.toPlainText()
+        if not text:
+            return
+        QGuiApplication.clipboard().setText(text)
+        if hasattr(self, "copy_dst_btn"):
+            old = self.copy_dst_btn.text()
+            self.copy_dst_btn.setText("已复制 ✓")
+            self.copy_dst_btn.setEnabled(False)
+            QTimer.singleShot(1200, lambda: (self.copy_dst_btn.setText(old), self.copy_dst_btn.setEnabled(True)))
 
     def show_translation_result(self, result: dict) -> None:
         src, tgt = result["src_lang"], result["tgt_lang"]
@@ -731,11 +862,6 @@ class MainWindow(QWidget):
         self.result_edit.setPlainText("")
         self.translate_status.setText(f"❌ 翻译失败：{message}")
 
-    def _copy_result(self) -> None:
-        text = self.result_edit.toPlainText()
-        if text:
-            QGuiApplication.clipboard().setText(text)
-
     def load_file_for_translation(self, file_path: str) -> None:
         try:
             raw = open(file_path, "rb").read()
@@ -743,9 +869,9 @@ class MainWindow(QWidget):
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
                 text = raw.decode("gbk", errors="replace")
-            if len(text) > 60000:
-                text = text[:60000]
-                self.translate_status.setText("文件过长，仅截取前 60000 字符进行翻译。")
+            if len(text) > 1_000_000:
+                text = text[:1_000_000]
+                self.translate_status.setText("文件过长，仅截取前 1000000 字符进行翻译。")
             self.tabs.setCurrentIndex(0)
             self.source_edit.setPlainText(text)
             self._on_translate_clicked()
@@ -784,7 +910,8 @@ class MainWindow(QWidget):
                 if col == 0:
                     item.setData(Qt.UserRole, r["id"])
                 if col in (2, 3):
-                    item.setToolTip(r["source"] if col == 2 else r["result"])
+                    full_val = r["source"] if col == 2 else r["result"]
+                    item.setToolTip(self._ellipsis(full_val, 1000))
                 table.setItem(i, col, item)
         table.setUpdatesEnabled(True)
         self._update_history_selection_info()
@@ -826,10 +953,17 @@ class MainWindow(QWidget):
         return ids
 
     def _copy_selected(self, which: str = "result") -> None:
-        col = 3 if which == "result" else 2
         selected_rows = sorted({it.row() for it in self.history_table.selectedItems()})
         texts = []
         for row in selected_rows:
+            id_item = self.history_table.item(row, 0)
+            hid = id_item.data(Qt.UserRole) if id_item is not None else None
+            if hid is not None:
+                record = self.history.get(hid)
+                if record and record.get(which):
+                    texts.append(record[which])
+                    continue
+            col = 3 if which == "result" else 2
             cell = self.history_table.item(row, col)
             if cell is not None:
                 texts.append(cell.text())

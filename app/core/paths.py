@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "MaiTranslator"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 MODEL_FILENAME = "HY-MT1.5-7B-Q4_K_M.gguf"
 
 

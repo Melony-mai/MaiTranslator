@@ -231,6 +231,26 @@ QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
 QLabel#hint { color: $text_muted; font-size: 12px; }
+QLabel#panelTitle {
+    color: $text_secondary;
+    font-weight: bold;
+    font-size: 13px;
+}
+
+QSplitter::handle {
+    background: transparent;
+}
+QSplitter::handle:horizontal {
+    width: 8px;
+    margin: 0 1px;
+}
+QSplitter::handle:horizontal:hover {
+    background: $border_strong;
+    border-radius: 3px;
+}
+QSplitter::handle:horizontal:pressed {
+    background: $accent;
+}
 QToolTip {
     background: $surface; color: $text; border: 1px solid $border_strong;
     padding: 4px;

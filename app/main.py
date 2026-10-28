@@ -81,6 +81,8 @@ class MaiTranslatorApp:
 
         self.service.finished_ok.connect(self._on_main_translate_finished)
         self.service.failed.connect(self._on_main_translate_failed)
+        self.service.progress.connect(self._on_main_translate_progress)
+        self.service.chunk_translated.connect(self._on_main_chunk_streamed)
 
         self.tray = QSystemTrayIcon(icon)
         self._build_tray_menu()
@@ -283,6 +285,14 @@ class MaiTranslatorApp:
         if not accepted and self.service.busy:
             self.main_window.set_translate_busy(False)
             self.main_window.translate_status.setText("已有翻译任务进行中，请稍候…")
+
+    def _on_main_translate_progress(self, current: int, total: int, origin: str = "") -> None:
+        if origin == "main" and total > 1:
+            self.main_window.set_translate_progress(current, total)
+
+    def _on_main_chunk_streamed(self, partial_text: str, current: int, total: int, origin: str = "") -> None:
+        if origin == "main":
+            self.main_window.set_translate_stream(partial_text, current, total)
 
     def _on_main_translate_finished(self, result: dict) -> None:
         if result.get("origin") != "main":

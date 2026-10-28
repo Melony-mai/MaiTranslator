@@ -24,6 +24,8 @@ class AppController(QObject):
         self._capture_hwnd = 0
         service.finished_ok.connect(self._on_translated)
         service.failed.connect(self._on_failed)
+        service.progress.connect(self._on_progress)
+        service.chunk_translated.connect(self._on_chunk_streamed)
         self.floating.copy_requested.connect(self._on_copy_requested)
 
     @staticmethod
@@ -52,9 +54,9 @@ class AppController(QObject):
             if not text:
                 log.warning("未获取到任何文本（剪贴板为空且无选中文本）")
                 return
-            if len(text) > 20000:
-                text = text[:20000]
-                log.info("文本过长，已截断到 20000 字符")
+            if len(text) > 1_000_000:
+                text = text[:1_000_000]
+                log.info("文本过长，已截断到 1000000 字符")
             self.start_translation(text, forced=None)
         except Exception:
             log.exception("热键流程异常")
@@ -102,6 +104,14 @@ class AppController(QObject):
         if origin == "main":
             return
         self.floating.set_error(f"翻译失败：{message}\n\n请确认推理引擎已启动（设置页可查看状态）。")
+
+    def _on_progress(self, current: int, total: int, origin: str) -> None:
+        if origin != "main" and total > 1:
+            self.floating.set_progress(current, total)
+
+    def _on_chunk_streamed(self, partial_text: str, current: int, total: int, origin: str = "") -> None:
+        if origin != "main":
+            self.floating.set_stream_result(partial_text, current, total)
 
     def _on_copy_requested(self) -> None:
         pass
